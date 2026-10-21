@@ -42,12 +42,17 @@ async function mountTranscript(
     '@/lib/opencode/usage': usage,
     '@/providers/opencode-provider-utils': { pruneByKeepIds },
     '@/providers/services/session-service': { getSessionMessages, TRANSCRIPT_PAGE_LIMIT: 20 },
+    '@/providers/session-message-cache': {
+      hydrateSessionMessages: async () => undefined,
+      persistSessionMessages: async () => undefined,
+    },
   });
   function useHarness() {
     const [messagesBySession, setMessagesBySession] = runtime.react.useState(initial);
     const [, setIsRefreshingMessages] = runtime.react.useState(false);
     const state = useTranscriptState({
       client: {} as never,
+      connectionScope: 'test-scope',
       isCurrentClient: () => true,
       currentSessionId: 's',
       transcriptVerbosity: verbosity,

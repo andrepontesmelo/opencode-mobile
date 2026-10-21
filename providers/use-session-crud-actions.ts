@@ -1,4 +1,5 @@
 import { createSession as svcCreateSession, summarizeSession } from '@/providers/services/session-service';
+import { removeSessionMessages } from '@/providers/session-message-cache';
 import { useCallback } from 'react';
 
 import type { Session } from '@/lib/opencode/types';
@@ -92,6 +93,7 @@ export function useSessionCrudActions({
       if (!isCurrentClient(client)) {
         return;
       }
+      void removeSessionMessages(connectionScopeRef.current, sessionId);
       setMessagesBySession((current) => {
         const next = { ...current };
         delete next[sessionId];

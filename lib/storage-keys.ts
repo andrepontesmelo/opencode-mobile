@@ -47,3 +47,15 @@ export function sessionsCacheKey(connectionScope: string, projectPath: string) {
 export function sessionStatusesCacheKey(connectionScope: string, projectPath: string) {
   return `opencode-mobile.session-statuses.${connectionScope}.${projectPath}`;
 }
+
+// Per-session transcript window cache, keyed by connection scope and session
+// id so two servers never share entries; written only from confirmed
+// transcript fetches in providers/use-transcript-state.ts and bounded by the
+// LRU index in providers/session-message-cache.ts.
+export function sessionMessagesCacheKey(connectionScope: string, sessionId: string) {
+  return `opencode-mobile.session-messages.${connectionScope}.${sessionId}`;
+}
+
+// Most-recent-first session ids with a cached transcript window; bounds total
+// cache size by evicting the least recently persisted entry.
+export const SESSION_MESSAGES_CACHE_INDEX_KEY = 'opencode-mobile.session-messages.index';

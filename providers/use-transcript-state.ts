@@ -12,6 +12,8 @@ import { addUsageSteps, type SessionUsageStep } from '@/lib/opencode/usage';
 import type { ScopedOpencodeClient } from '@/lib/opencode/client';
 import type { TranscriptRefreshMode } from '@/providers/opencode-provider-types';
 import { pruneByKeepIds } from '@/providers/opencode-provider-utils';
+import type { CachedMessageWindow } from '@/providers/session-message-cache';
+import { hydrateSessionMessages, persistSessionMessages } from '@/providers/session-message-cache';
 import {
   getSessionMessages as svcGetSessionMessages,
   TRANSCRIPT_PAGE_LIMIT,
@@ -71,6 +73,7 @@ function boundWindow(records: SessionMessageRecord[], verbosity: TranscriptVerbo
 // retains observed call usage and todos without requiring unbounded history reads.
 export function useTranscriptState({
   client,
+  connectionScope,
   isCurrentClient,
   currentSessionId,
   transcriptVerbosity,
@@ -79,6 +82,7 @@ export function useTranscriptState({
   setIsRefreshingMessages,
 }: {
   client: ScopedOpencodeClient;
+  connectionScope: string;
   isCurrentClient: (candidate: object) => boolean;
   currentSessionId?: string;
   transcriptVerbosity: TranscriptVerbosity;
@@ -124,6 +128,15 @@ export function useTranscriptState({
       });
     }
   }, []);
+
+  // Written only from confirmed fetch results, mirroring the session list
+  // cache; a failed write just loses the cache until the next refresh.
+  const persistConfirmed = useCallback(
+    (sessionId: string, records: SessionMessageRecord[], window: CachedMessageWindow) => {
+      void persistSessionMessages(connectionScope, sessionId, records, window);
+    },
+    [connectionScope],
+  );
 
   // A cold window starts from the newest page and pages backward until the
   // display target is met. Normal sessions stop after the first page.
@@ -228,7 +241,17 @@ export function useTranscriptState({
         setIsRefreshingMessages(true);
       }
       try {
-        const held = messagesBySessionRef.current[sessionId] ?? [];
+        let held = messagesBySessionRef.current[sessionId] ?? [];
+        if (held.length === 0) {
+          // Paint the cached transcript window first so the session opens
+          // without waiting on the server; the confirmed fetch below
+          // reconciles it. Existing state always wins over the cache.
+          await hydrateSessionMessages(connectionScope, sessionId, (records, window) => {
+            held = records;
+            setMessagesBySession((current) => (current[sessionId] ? current : { ...current, [sessionId]: records }));
+            setMessageWindows((current) => (current[sessionId] ? current : { ...current, [sessionId]: window }));
+          }, () => isCurrentClient(client));
+        }
         // Default to a cold load when nothing is held, otherwise merge the
         // newest page into what we have. A requested mode overrides the default.
         const mode: TranscriptRefreshMode = options?.mode ?? (held.length === 0 ? 'initial' : 'tail');
@@ -255,6 +278,7 @@ export function useTranscriptState({
             [sessionId]: { nextBefore: loaded.nextBefore, hasMore: loaded.hasMore },
           }));
           recordUsageAndTodos(sessionId, loaded.records);
+          persistConfirmed(sessionId, loaded.records, { nextBefore: loaded.nextBefore, hasMore: loaded.hasMore });
           return loaded.records;
         }
 
@@ -277,19 +301,21 @@ export function useTranscriptState({
             [sessionId]: { nextBefore: loaded.nextBefore, hasMore: loaded.hasMore },
           }));
           recordUsageAndTodos(sessionId, loaded.records);
+          persistConfirmed(sessionId, loaded.records, { nextBefore: loaded.nextBefore, hasMore: loaded.hasMore });
           return loaded.records;
         }
 
+        const merged = boundWindow(mergeSessionMessageWindow(held, page.records), transcriptVerbosity);
         setMessagesBySession((current) => {
           const previous = current[sessionId] ?? held;
-          const merged = mergeSessionMessageWindow(previous, page.records);
-          const bounded = boundWindow(merged, transcriptVerbosity);
+          const bounded = boundWindow(mergeSessionMessageWindow(previous, page.records), transcriptVerbosity);
           if (bounded === previous) {
             return current;
           }
           return { ...current, [sessionId]: bounded };
         });
         recordUsageAndTodos(sessionId, page.records);
+        persistConfirmed(sessionId, merged, messageWindowsRef.current[sessionId] ?? { hasMore: false });
         return page.records;
       } finally {
         if (!silent) {
@@ -297,7 +323,7 @@ export function useTranscriptState({
         }
       }
     },
-    [client, isCurrentClient, loadDisplayedWindow, recordUsageAndTodos, setIsRefreshingMessages, setMessagesBySession, transcriptVerbosity],
+    [client, connectionScope, isCurrentClient, loadDisplayedWindow, persistConfirmed, recordUsageAndTodos, setIsRefreshingMessages, setMessagesBySession, setMessageWindows, transcriptVerbosity],
   );
 
   const loadOlderMessages = useCallback(

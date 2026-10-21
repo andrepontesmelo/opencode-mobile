@@ -45,7 +45,10 @@ export function useSessionBootstrapActions({
       (!pendingTarget || pendingTarget.sessionId === currentSessionId)
     ) {
       if (!messagesBySession[currentSessionId]) {
-        await refreshMessages(currentSessionId, true);
+        // Cached rows (hydrated inside refreshMessages) render immediately;
+        // the confirmed fetch reconciles in the background so opening a
+        // session never waits on the server round-trip.
+        void refreshMessages(currentSessionId, true).catch(() => undefined);
       }
       return currentSessionId;
     }
